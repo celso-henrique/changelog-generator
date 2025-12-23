@@ -1,0 +1,24 @@
+{
+  "name": "changelog-generator",
+  "version": "1.0.0",
+  "description": "Generate a changelog from GitHub commits between two tags",
+  "type": "module",
+  "main": "changelog.js",
+  "scripts": {
+    "changelog": "node changelog.js"
+  },
+  "keywords": [
+    "changelog",
+    "github",
+    "release",
+    "commits",
+    "automation"
+  ],
+  "author": "celso.henrique@hotmail.com.br",
+  "license": "MIT",
+  "dependencies": {
+    "@octokit/rest": "^20.0.2",
+    "dotenv": "^16.4.5",
+    "axios": "^1.6.8"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "authors": [
+    "gabrielbarth",
+    "filipefn",
+    "magdsilva"
+  ],
+  "types": {
+    "feat": "🚀 Features",
+    "fix": "🐛 Fixes",
+    "perf": "⚡ Performance",
+    "refactor": "🧹 Refactor"
+  },
+  "ignoreTypes": []
+}
