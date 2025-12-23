@@ -1,4 +1,5 @@
 import { Octokit } from "@octokit/rest";
+import axios from "axios";
 import fs from "fs";
 import "dotenv/config";
 
@@ -9,11 +10,6 @@ const octokit = new Octokit({
 const owner = process.env.GITHUB_OWNER;
 const repo = process.env.GITHUB_REPO;
 
-if (!owner || !repo) {
-  console.error("GITHUB_OWNER and GITHUB_REPO must be set");
-  process.exit(1);
-}
-
 const config = JSON.parse(fs.readFileSync("./config.json", "utf-8"));
 
 async function getCommitsBetweenTags(fromTag, toTag) {
@@ -23,7 +19,6 @@ async function getCommitsBetweenTags(fromTag, toTag) {
     base: fromTag,
     head: toTag,
   });
-
   return data.commits || [];
 }
 
@@ -38,7 +33,6 @@ async function listTags() {
       per_page: 100,
       page,
     });
-
     if (!data.length) break;
     tags.push(...data);
     page++;
@@ -49,35 +43,26 @@ async function listTags() {
 
 async function getPreviousTag(currentTag) {
   const tags = await listTags();
-
   const index = tags.findIndex(t => t.name === currentTag);
-  if (index === -1) {
-    throw new Error(`Tag not found: ${currentTag}`);
+  if (index === -1 || !tags[index + 1]) {
+    throw new Error("Previous tag not found");
   }
-
-  const previous = tags[index + 1];
-  if (!previous) {
-    throw new Error(`No previous tag found before ${currentTag}`);
-  }
-
-  return previous.name;
+  return tags[index + 1].name;
 }
 
 function parseCommit(message) {
   const firstLine = message.split("\n")[0];
-  const match = firstLine.match(
-    /^(\w+)(?:\([^)]+\))?(!)?:\s*(.+)$/
-  );
+  const match = firstLine.match(/^(\w+)(?:\([^)]+\))?(!)?:\s*(.+)$/);
+
+  const prMatch = firstLine.match(/\(#(\d+)\)/);
 
   if (!match) {
     return {
       type: "other",
       description: firstLine.trim(),
-      prNumber: null,
+      prNumber: prMatch ? prMatch[1] : null,
     };
   }
-
-  const prMatch = firstLine.match(/\(#(\d+)\)/);
 
   return {
     type: match[1].toLowerCase(),
@@ -103,43 +88,90 @@ function isAuthorAllowed(commit) {
     .filter(Boolean)
     .map(normalize);
 
-  return config.authors.some(configAuthor =>
+  return config.authors.some(author =>
     candidates.some(candidate =>
-      candidate.includes(normalize(configAuthor))
+      candidate.includes(normalize(author))
     )
   );
 }
 
-function generateChangelog(commits) {
+function generateChangelog(commits, version) {
   const sections = {};
 
   for (const commit of commits) {
     if (!isAuthorAllowed(commit)) continue;
 
     const parsed = parseCommit(commit.commit.message);
-    if (!parsed) continue;
-
     if (config.ignoreTypes?.includes(parsed.type)) continue;
 
-    const sectionTitle =
-      config.types?.[parsed.type] || 'Others';
+    const section =
+      config.types?.[parsed.type] || "Outros";
 
     const prLink = parsed.prNumber
-      ? ` ([#${parsed.prNumber}](https://github.com/${owner}/${repo}/pull/${parsed.prNumber}))`
+      ? ` (<a href="https://github.com/${owner}/${repo}/pull/${parsed.prNumber}">#${parsed.prNumber}</a>)`
       : "";
 
-    const line = `- ${parsed.description}${prLink}`;
-
-    sections[sectionTitle] ??= [];
-    sections[sectionTitle].push(line);
+    sections[section] ??= [];
+    sections[section].push(`<li>${parsed.description}${prLink}</li>`);
   }
 
-  return Object.entries(sections)
+  const body = Object.entries(sections)
     .map(
       ([title, items]) =>
-        `## ${title}\n${items.join("\n")}`
+        `<h3>${title}</h3><ul>${items.join("")}</ul>`
     )
-    .join("\n\n");
+    .join("");
+
+  return `<h2>${version}</h2>${body}`;
+}
+
+async function getConfluencePage() {
+  const url = `${process.env.CONFLUENCE_BASE_URL}/wiki/rest/api/content/${process.env.CONFLUENCE_PAGE_ID}?expand=body.storage,version,title`;
+
+  const { data } = await axios.get(url, {
+    auth: {
+      username: process.env.CONFLUENCE_EMAIL,
+      password: process.env.CONFLUENCE_API_TOKEN,
+    },
+  });
+
+  return data;
+}
+
+async function updateConfluencePage(newSectionHtml) {
+  const page = await getConfluencePage();
+
+  const updatedBody =
+    newSectionHtml + page.body.storage.value;
+
+  const payload = {
+    id: page.id,
+    type: "page",
+    title: page.title,
+    version: {
+      number: page.version.number + 1,
+    },
+    body: {
+      storage: {
+        value: updatedBody,
+        representation: "storage",
+      },
+    },
+  };
+
+  await axios.put(
+    `${process.env.CONFLUENCE_BASE_URL}/wiki/rest/api/content/${page.id}`,
+    payload,
+    {
+      auth: {
+        username: process.env.CONFLUENCE_EMAIL,
+        password: process.env.CONFLUENCE_API_TOKEN,
+      },
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
 }
 
 async function run() {
@@ -155,22 +187,23 @@ async function run() {
   } else if (arg1) {
     toTag = arg1;
     fromTag = await getPreviousTag(toTag);
-    console.log(`Using interval: ${fromTag} → ${toTag}`);
   } else {
-    console.error("Usage:");
-    console.error("  node changelog.js <fromTag> <toTag>");
-    console.error("  node changelog.js <tag>");
+    console.error("Usage: node changelog.js <tag> | <from> <to>");
     process.exit(1);
   }
 
   const commits = await getCommitsBetweenTags(fromTag, toTag);
-  const changelog = generateChangelog(commits);
+  const changelogHtml = generateChangelog(commits, toTag);
 
-  fs.writeFileSync("CHANGELOG.md", changelog);
-  console.log("✅ Changelog generated in CHANGELOG.md");
+  fs.writeFileSync("CHANGELOG.html", changelogHtml);
+
+  if (process.env.CONFLUENCE_PAGE_ID) {
+    await updateConfluencePage(changelogHtml);
+    console.log("✅ Confluence page updated");
+  }
 }
 
 run().catch(err => {
-  console.error("Error generating changelog:", err.message || err);
+  console.error(err.message || err);
   process.exit(1);
 });

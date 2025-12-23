@@ -1,18 +1,24 @@
 # Changelog Generator
 
-Simple local tool to generate a changelog from GitHub commits between two tags.
+Local tool to generate changelogs from GitHub commits between releases.
 
-The script fetches commits from a repository, filters them by author and commit type, and generates a structured changelog in Markdown format. It is designed to run locally without requiring CI/CD pipeline changes or additional infrastructure.
+The script fetches commits from a GitHub repository, applies author and commit-type filters, parses conventional-style commit messages, and generates a structured changelog. It can also optionally publish the generated changelog to a specific Confluence page.
+
+Designed to run locally, without requiring CI/CD pipeline changes or additional infrastructure.
 
 ---
 
 ## Features
 
-- Fetch commits between two Git tags
-- Filter commits by author
-- Parse conventional-style commit messages
+- Fetch commits between Git tags
+- Accepts **one or two version parameters**
+- Automatically resolves the previous tag when only one version is provided
+- Filter commits by author (login, name, or email)
+- Parse conventional-style commit messages (robust and tolerant)
 - Group changes by type
-- Generate a `CHANGELOG.md` file
+- Generate local changelog output
+- Include links to GitHub pull requests
+- Optionally publish the changelog to Confluence
 - Runs locally with minimal setup
 
 ---
@@ -20,8 +26,9 @@ The script fetches commits from a repository, filters them by author and commit 
 ## Requirements
 
 - Node.js 18+
-- GitHub personal access token with read access
+- GitHub personal access token with repository read access
 - Access to the target GitHub repository
+- (Optional) Confluence API token for publishing
 
 ---
 
@@ -33,7 +40,8 @@ changelog-generator/
 ├── config.json
 ├── .env
 ├── package.json
-└── CHANGELOG.md
+├── CHANGELOG.md
+└── CHANGELOG.html
 ````
 
 ---
@@ -48,7 +56,7 @@ npm install
 
 ## Configuration
 
-### Environment variables
+### Environment Variables
 
 Create a `.env` file in the project root:
 
@@ -58,17 +66,27 @@ GITHUB_OWNER=your-github-org-or-user
 GITHUB_REPO=your-repository
 ```
 
+#### Optional: Confluence publishing
+
+```env
+CONFLUENCE_BASE_URL=https://your-company.atlassian.net
+CONFLUENCE_EMAIL=your.email@company.com
+CONFLUENCE_API_TOKEN=xxxxxxxxxxxx
+CONFLUENCE_PAGE_ID=123456789
+```
+
 ---
 
-### Commit filters
+### Commit Filters
 
 Edit `config.json`:
 
 ```json
 {
   "authors": [
-    "username1",
-    "username2"
+    "username",
+    "name fragment",
+    "@company.com"
   ],
   "types": {
     "feat": "Features",
@@ -80,49 +98,73 @@ Edit `config.json`:
 }
 ```
 
-* `authors`: GitHub usernames to include
+**Fields**
+
+* `authors`: list of fragments used to match commit authors (login, name, or email)
 * `types`: mapping between commit types and changelog sections
-* `ignoreTypes`: commit types that will be ignored
+* `ignoreTypes`: commit types that will be excluded
+
+Author matching is **case-insensitive** and **partial**, making it compatible with squash merges, bots, and different email formats.
 
 ---
 
 ## Usage
 
-Run the script with the base and target tag:
+### Generate changelog for a release (recommended)
 
 ```bash
 node changelog.js v1.3.0
 ```
 
-If successful, the changelog will be generated in:
+The script automatically determines the previous tag and generates the changelog for that release.
 
-```text
-CHANGELOG.md
+---
+
+### Generate changelog for an explicit interval
+
+```bash
+node changelog.js v1.2.0 v1.3.0
 ```
+
+---
+
+### Output
+
+* Local files:
+
+  * `CHANGELOG.md`
+  * `CHANGELOG.html`
+* If Confluence is configured, the changelog is prepended to the specified page.
 
 ---
 
 ## Commit Message Format
 
-The script supports commit messages in the following format:
+The parser supports common conventional commit variations, including:
 
 ```text
-<type>: <description> (#<PR_NUMBER>)
+<type>: <description>
+<type>(scope): <description>
+<type>!: <description>
+<type>(scope)!: <description>
 ```
 
 Examples:
 
 ```text
 feat: remove legacy onboarding selector kmp flow (#21544)
-feat: improving analytics events (#21546)
+feat(auth): improving analytics events
+fix!: adjust nullable responses
 fix: adjusts nullable responses LPPJ-675 (#21540)
-chore: bump multiplatform SDK version to 2.303.0
+chore: bump multiplatform SDK version
 ```
 
 Notes:
 
-* The PR number is optional and ignored in the changelog output
-* Commits with ignored types (e.g. `chore`) are excluded
+* Pull request numbers are optional
+* When present, PR numbers are converted into clickable links
+* Commits with ignored types are excluded
+* Commits that do not match the pattern are grouped under `Outros`
 
 ---
 
@@ -130,13 +172,11 @@ Notes:
 
 ```md
 ## Features
-- Remove legacy onboarding selector kmp flow
+- Remove legacy onboarding selector kmp flow ([#21544](https://github.com/org/repo/pull/21544))
 - Improving analytics events
-- New plan id
 
 ## Bug Fixes
-- Navigate to Cards Home via external navigation in PopUp
-- Adjusts nullable responses LPPJ-675
+- Adjusts nullable responses LPPJ-675 ([#21540](https://github.com/org/repo/pull/21540))
 ```
 
 ---
@@ -144,8 +184,9 @@ Notes:
 ## Notes
 
 * Commits are retrieved using the GitHub `compareCommits` API.
-* Merge commits and commits without a recognized type are ignored.
-* Output format can be adapted to CSV, JSON, HTML, or messaging platforms.
+* The tool reflects the actual Git history; squash merges result in one entry per PR.
+* The changelog generation is tolerant to inconsistent commit formats.
+* Output format can be adapted to HTML, JSON, CSV, or messaging platforms.
 
 ---
 
