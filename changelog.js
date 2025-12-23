@@ -105,7 +105,7 @@ function generateChangelog(commits, version) {
     if (config.ignoreTypes?.includes(parsed.type)) continue;
 
     const section =
-      config.types?.[parsed.type] || "Outros";
+      config.types?.[parsed.type] || "Others";
 
     const prLink = parsed.prNumber
       ? ` (<a href="https://github.com/${owner}/${repo}/pull/${parsed.prNumber}">#${parsed.prNumber}</a>)`
