@@ -3,6 +3,20 @@ import axios from "axios";
 import fs from "fs";
 import "dotenv/config";
 
+// Validate required environment variables
+function validateEnvVars() {
+  const required = ["GITHUB_TOKEN", "GITHUB_OWNER", "GITHUB_REPO"];
+  const missing = required.filter(key => !process.env[key]);
+
+  if (missing.length > 0) {
+    console.error(`❌ Missing required environment variables: ${missing.join(", ")}`);
+    console.error("Please check your .env file");
+    process.exit(1);
+  }
+}
+
+validateEnvVars();
+
 const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
 });
@@ -10,43 +24,84 @@ const octokit = new Octokit({
 const owner = process.env.GITHUB_OWNER;
 const repo = process.env.GITHUB_REPO;
 
-const config = JSON.parse(fs.readFileSync("./config.json", "utf-8"));
+let config;
+try {
+  config = JSON.parse(fs.readFileSync("./config.json", "utf-8"));
+} catch (error) {
+  console.error("❌ Error reading config.json:", error.message);
+  process.exit(1);
+}
 
 async function getCommitsBetweenTags(fromTag, toTag) {
-  const { data } = await octokit.repos.compareCommits({
-    owner,
-    repo,
-    base: fromTag,
-    head: toTag,
-  });
-  return data.commits || [];
+  try {
+    const { data } = await octokit.repos.compareCommits({
+      owner,
+      repo,
+      base: fromTag,
+      head: toTag,
+    });
+    return data.commits || [];
+  } catch (error) {
+    if (error.status === 404) {
+      throw new Error(`Tag not found: ${fromTag} or ${toTag}. Please verify the tag names.`);
+    }
+    if (error.status === 401) {
+      throw new Error("Authentication failed. Please check your GITHUB_TOKEN has 'repo' or 'public_repo' scope.");
+    }
+    throw new Error(`Failed to get commits: ${error.message}`);
+  }
 }
 
 async function listTags() {
-  const tags = [];
-  let page = 1;
+  try {
+    const tags = [];
+    let page = 1;
 
-  while (true) {
-    const { data } = await octokit.repos.listTags({
-      owner,
-      repo,
-      per_page: 100,
-      page,
-    });
-    if (!data.length) break;
-    tags.push(...data);
-    page++;
+    while (true) {
+      const { data } = await octokit.repos.listTags({
+        owner,
+        repo,
+        per_page: 100,
+        page,
+      });
+      if (!data.length) break;
+      tags.push(...data);
+      page++;
+    }
+
+    return tags;
+  } catch (error) {
+    if (error.status === 404) {
+      throw new Error(`Repository not found: ${owner}/${repo}. Please verify GITHUB_OWNER and GITHUB_REPO in your .env file.`);
+    }
+    if (error.status === 401) {
+      throw new Error("Authentication failed. Please check your GITHUB_TOKEN has 'repo' or 'public_repo' scope.");
+    }
+    if (error.status === 403) {
+      throw new Error("Access forbidden. Your token may not have permission to access this repository.");
+    }
+    throw new Error(`Failed to list tags: ${error.message}`);
   }
-
-  return tags;
 }
 
 async function getPreviousTag(currentTag) {
   const tags = await listTags();
-  const index = tags.findIndex(t => t.name === currentTag);
-  if (index === -1 || !tags[index + 1]) {
-    throw new Error("Previous tag not found");
+
+  if (tags.length === 0) {
+    throw new Error(`No tags found in repository ${owner}/${repo}`);
   }
+
+  const index = tags.findIndex(t => t.name === currentTag);
+
+  if (index === -1) {
+    const availableTags = tags.slice(0, 5).map(t => t.name).join(", ");
+    throw new Error(`Tag "${currentTag}" not found. Available tags: ${availableTags}${tags.length > 5 ? "..." : ""}`);
+  }
+
+  if (!tags[index + 1]) {
+    throw new Error(`No previous tag found before "${currentTag}". This is the oldest tag.`);
+  }
+
   return tags[index + 1].name;
 }
 
@@ -126,52 +181,76 @@ function generateChangelog(commits, version) {
 }
 
 async function getConfluencePage() {
+  const required = ["CONFLUENCE_BASE_URL", "CONFLUENCE_PAGE_ID", "CONFLUENCE_EMAIL", "CONFLUENCE_API_TOKEN"];
+  const missing = required.filter(key => !process.env[key]);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing Confluence environment variables: ${missing.join(", ")}`);
+  }
+
   const url = `${process.env.CONFLUENCE_BASE_URL}/wiki/rest/api/content/${process.env.CONFLUENCE_PAGE_ID}?expand=body.storage,version,title`;
 
-  const { data } = await axios.get(url, {
-    auth: {
-      username: process.env.CONFLUENCE_EMAIL,
-      password: process.env.CONFLUENCE_API_TOKEN,
-    },
-  });
-
-  return data;
-}
-
-async function updateConfluencePage(newSectionHtml) {
-  const page = await getConfluencePage();
-
-  const updatedBody =
-    newSectionHtml + page.body.storage.value;
-
-  const payload = {
-    id: page.id,
-    type: "page",
-    title: page.title,
-    version: {
-      number: page.version.number + 1,
-    },
-    body: {
-      storage: {
-        value: updatedBody,
-        representation: "storage",
-      },
-    },
-  };
-
-  await axios.put(
-    `${process.env.CONFLUENCE_BASE_URL}/wiki/rest/api/content/${page.id}`,
-    payload,
-    {
+  try {
+    const { data } = await axios.get(url, {
       auth: {
         username: process.env.CONFLUENCE_EMAIL,
         password: process.env.CONFLUENCE_API_TOKEN,
       },
-      headers: {
-        "Content-Type": "application/json",
-      },
+    });
+
+    return data;
+  } catch (error) {
+    if (error.response?.status === 401) {
+      throw new Error("Confluence authentication failed. Check CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN.");
     }
-  );
+    if (error.response?.status === 404) {
+      throw new Error(`Confluence page not found. Check CONFLUENCE_PAGE_ID: ${process.env.CONFLUENCE_PAGE_ID}`);
+    }
+    throw new Error(`Failed to get Confluence page: ${error.message}`);
+  }
+}
+
+async function updateConfluencePage(newSectionHtml) {
+  try {
+    const page = await getConfluencePage();
+
+    const updatedBody =
+      newSectionHtml + page.body.storage.value;
+
+    const payload = {
+      id: page.id,
+      type: "page",
+      title: page.title,
+      version: {
+        number: page.version.number + 1,
+      },
+      body: {
+        storage: {
+          value: updatedBody,
+          representation: "storage",
+        },
+      },
+    };
+
+    await axios.put(
+      `${process.env.CONFLUENCE_BASE_URL}/wiki/rest/api/content/${page.id}`,
+      payload,
+      {
+        auth: {
+          username: process.env.CONFLUENCE_EMAIL,
+          password: process.env.CONFLUENCE_API_TOKEN,
+        },
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+  } catch (error) {
+    if (error.response?.status === 409) {
+      throw new Error("Confluence page was modified by another user. Please try again.");
+    }
+    throw error;
+  }
 }
 
 async function run() {
@@ -184,26 +263,52 @@ async function run() {
   if (arg1 && arg2) {
     fromTag = arg1;
     toTag = arg2;
+    console.log(`📊 Generating changelog from ${fromTag} to ${toTag}...`);
   } else if (arg1) {
     toTag = arg1;
+    console.log(`📊 Finding previous tag for ${toTag}...`);
     fromTag = await getPreviousTag(toTag);
+    console.log(`✓ Previous tag found: ${fromTag}`);
   } else {
-    console.error("Usage: node changelog.js <tag> | <from> <to>");
+    console.error("❌ Usage: node changelog.js <tag> | <from> <to>");
+    console.error("\nExamples:");
+    console.error("  node changelog.js v1.2.0              # Generate from previous tag to v1.2.0");
+    console.error("  node changelog.js v1.1.0 v1.2.0       # Generate from v1.1.0 to v1.2.0");
     process.exit(1);
   }
 
+  console.log(`🔍 Fetching commits between ${fromTag} and ${toTag}...`);
   const commits = await getCommitsBetweenTags(fromTag, toTag);
+
+  if (commits.length === 0) {
+    console.warn(`⚠️  No commits found between ${fromTag} and ${toTag}`);
+  } else {
+    console.log(`✓ Found ${commits.length} commits`);
+  }
+
+  console.log("📝 Generating changelog...");
   const changelogHtml = generateChangelog(commits, toTag);
 
-  fs.writeFileSync("CHANGELOG.html", changelogHtml);
+  try {
+    fs.writeFileSync("CHANGELOG.html", changelogHtml);
+    console.log("✅ CHANGELOG.html generated successfully");
+  } catch (error) {
+    throw new Error(`Failed to write CHANGELOG.html: ${error.message}`);
+  }
 
   if (process.env.CONFLUENCE_PAGE_ID) {
-    await updateConfluencePage(changelogHtml);
-    console.log("✅ Confluence page updated");
+    console.log("📤 Updating Confluence page...");
+    try {
+      await updateConfluencePage(changelogHtml);
+      console.log("✅ Confluence page updated successfully");
+    } catch (error) {
+      console.error(`⚠️  Confluence update failed: ${error.message}`);
+      console.error("The changelog was still saved to CHANGELOG.html");
+    }
   }
 }
 
 run().catch(err => {
-  console.error(err.message || err);
+  console.error("\n❌ Error:", err.message || err);
   process.exit(1);
 });
