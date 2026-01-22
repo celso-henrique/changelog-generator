@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "description": "Generate a changelog from GitHub commits between two tags",
   "type": "module",
-  "main": "changelog.js",
+  "main": "index.js",
   "scripts": {
-    "changelog": "node changelog.js"
+    "changelog": "node index.js"
   },
   "keywords": [
     "changelog",
