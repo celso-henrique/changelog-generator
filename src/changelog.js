@@ -170,37 +170,68 @@ function generateChangelog(commits, version) {
     sections[section].push(`<li>${parsed.description}${prLink}</li>`);
   }
 
-  const body = Object.entries(sections)
-    .map(([title, items]) => {
-      const itemsList = `<ul>${items.join("")}</ul>`;
+  let body;
 
-      return `
-        <table style="width: 100%; table-layout: fixed;">
-          <colgroup>
-            <col style="width: 50%">
-            <col style="width: 35%">
-            <col style="width: 15%">
-          </colgroup>
-          <tbody>
-            <tr>
-              <th>${title}</th>
-              <th>Descrição</th>
-              <th>Links</th>
-            </tr>
-            <tr>
-              <td>${itemsList}</td>
-              <td></td>
-              <td>
-                <ul>
-                  <li>Link to doc here</li>
-                </ul>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      `.trim();
-    })
-    .join("");
+  if (Object.keys(sections).length === 0) {
+    // No changes found
+    body = `
+      <table style="width: 100%; table-layout: fixed;">
+        <colgroup>
+          <col style="width: 50%">
+          <col style="width: 35%">
+          <col style="width: 15%">
+        </colgroup>
+        <tbody>
+          <tr>
+            <th>Changes</th>
+            <th>Descrição</th>
+            <th>Links</th>
+          </tr>
+          <tr>
+            <td><ul><li>No changes</li></ul></td>
+            <td></td>
+            <td>
+              <ul>
+                <li>Link to doc here</li>
+              </ul>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    `.trim();
+  } else {
+    body = Object.entries(sections)
+      .map(([title, items]) => {
+        const itemsList = `<ul>${items.join("")}</ul>`;
+
+        return `
+          <table style="width: 100%; table-layout: fixed;">
+            <colgroup>
+              <col style="width: 50%">
+              <col style="width: 35%">
+              <col style="width: 15%">
+            </colgroup>
+            <tbody>
+              <tr>
+                <th>${title}</th>
+                <th>Descrição</th>
+                <th>Links</th>
+              </tr>
+              <tr>
+                <td>${itemsList}</td>
+                <td></td>
+                <td>
+                  <ul>
+                    <li>Link to doc here</li>
+                  </ul>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        `.trim();
+      })
+      .join("");
+  }
 
   return `<h2>${version}</h2>${body}`;
 }
@@ -211,35 +242,92 @@ async function run() {
 
   let fromTag;
   let toTag;
+  let changelogHtml = "";
 
   if (arg1 && arg2) {
+    // Two arguments: from and to tags
     fromTag = arg1;
     toTag = arg2;
     console.log(`📊 Generating changelog from ${fromTag} to ${toTag}...`);
+
+    console.log(`🔍 Fetching commits between ${fromTag} and ${toTag}...`);
+    const commits = await getCommitsBetweenTags(fromTag, toTag);
+
+    if (commits.length === 0) {
+      console.warn(`⚠️  No commits found between ${fromTag} and ${toTag}`);
+    } else {
+      console.log(`✓ Found ${commits.length} commits`);
+    }
+
+    console.log("📝 Generating changelog...");
+    changelogHtml = generateChangelog(commits, toTag);
+
   } else if (arg1) {
-    toTag = arg1;
-    console.log(`📊 Finding previous tag for ${toTag}...`);
-    fromTag = await getPreviousTag(toTag);
-    console.log(`✓ Previous tag found: ${fromTag}`);
+    // Single argument: check if it's a number (N versions) or a tag
+    const isNumber = /^\d+$/.test(arg1);
+
+    if (isNumber) {
+      // Generate changelog for last N versions
+      const count = parseInt(arg1, 10);
+      console.log(`📊 Generating changelog for last ${count} version(s)...`);
+
+      const tags = await listTags();
+      if (tags.length === 0) {
+        throw new Error(`No tags found in repository ${owner}/${repo}`);
+      }
+
+      const versionsToProcess = Math.min(count, tags.length);
+      console.log(`✓ Found ${tags.length} total tags, processing ${versionsToProcess}...`);
+
+      const changelogs = [];
+
+      for (let i = 0; i < versionsToProcess; i++) {
+        const currentTag = tags[i].name;
+        const previousTag = tags[i + 1]?.name;
+
+        if (!previousTag) {
+          console.log(`⚠️  Skipping ${currentTag} (oldest tag, no previous version)`);
+          continue;
+        }
+
+        console.log(`🔍 Processing ${currentTag} (from ${previousTag})...`);
+        const commits = await getCommitsBetweenTags(previousTag, currentTag);
+        console.log(`  ✓ Found ${commits.length} commits`);
+
+        const html = generateChangelog(commits, currentTag);
+        changelogs.push(html);
+      }
+
+      changelogHtml = changelogs.join("");
+
+    } else {
+      // Single tag: find previous tag automatically
+      toTag = arg1;
+      console.log(`📊 Finding previous tag for ${toTag}...`);
+      fromTag = await getPreviousTag(toTag);
+      console.log(`✓ Previous tag found: ${fromTag}`);
+
+      console.log(`🔍 Fetching commits between ${fromTag} and ${toTag}...`);
+      const commits = await getCommitsBetweenTags(fromTag, toTag);
+
+      if (commits.length === 0) {
+        console.warn(`⚠️  No commits found between ${fromTag} and ${toTag}`);
+      } else {
+        console.log(`✓ Found ${commits.length} commits`);
+      }
+
+      console.log("📝 Generating changelog...");
+      changelogHtml = generateChangelog(commits, toTag);
+    }
+
   } else {
-    console.error("❌ Usage: node changelog.js <tag> | <from> <to>");
+    console.error("❌ Usage: node changelog.js <tag> | <number> | <from> <to>");
     console.error("\nExamples:");
     console.error("  node changelog.js v1.2.0              # Generate from previous tag to v1.2.0");
+    console.error("  node changelog.js 10                  # Generate for last 10 versions");
     console.error("  node changelog.js v1.1.0 v1.2.0       # Generate from v1.1.0 to v1.2.0");
     process.exit(1);
   }
-
-  console.log(`🔍 Fetching commits between ${fromTag} and ${toTag}...`);
-  const commits = await getCommitsBetweenTags(fromTag, toTag);
-
-  if (commits.length === 0) {
-    console.warn(`⚠️  No commits found between ${fromTag} and ${toTag}`);
-  } else {
-    console.log(`✓ Found ${commits.length} commits`);
-  }
-
-  console.log("📝 Generating changelog...");
-  const changelogHtml = generateChangelog(commits, toTag);
 
   try {
     fs.writeFileSync("CHANGELOG.html", changelogHtml);
