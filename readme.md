@@ -11,11 +11,14 @@ Designed to run locally, without requiring CI/CD pipeline changes or additional 
 ## Features
 
 - Fetch commits between Git tags
-- Accepts **one or two version parameters**
+- Accepts **one or two version parameters** or **number of versions**
+- Generate changelog for **multiple versions at once** (e.g., last 10 releases)
 - Automatically resolves the previous tag when only one version is provided
+- Support for **multiple environments** via custom `.env` files
 - Filter commits by author (login, name, or email)
 - Parse conventional-style commit messages (robust and tolerant)
 - Group changes by type
+- Display "No changes" for versions without valid commits
 - Generate local changelog output
 - Include links to GitHub pull requests
 - Optionally publish the changelog to Confluence
@@ -36,13 +39,17 @@ Designed to run locally, without requiring CI/CD pipeline changes or additional 
 
 ```text
 changelog-generator/
-├── changelog.js
+├── src/
+│   ├── changelog.js
+│   └── confluence.js
+├── index.js
 ├── config.json
 ├── .env
+├── .env.example
 ├── package.json
 ├── CHANGELOG.md
 └── CHANGELOG.html
-````
+```
 
 ---
 
@@ -58,7 +65,7 @@ npm install
 
 ### Environment Variables
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (or use `.env.example` as template):
 
 ```env
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxx
@@ -75,6 +82,18 @@ CONFLUENCE_API_TOKEN=xxxxxxxxxxxx
 CONFLUENCE_PAGE_ID=123456789
 ```
 
+#### Using Custom Environment Files
+
+You can use different `.env` files for different environments:
+
+```bash
+# Using a custom .env file
+DOTENV_CONFIG_PATH=.xpto.env npm run changelog v1.3.0
+
+# Or directly with node
+DOTENV_CONFIG_PATH=.xpto.env node index.js v1.3.0
+```
+
 ---
 
 ### Commit Filters
@@ -83,11 +102,7 @@ Edit `config.json`:
 
 ```json
 {
-  "authors": [
-    "username",
-    "name fragment",
-    "@company.com"
-  ],
+  "authors": ["username", "name fragment", "@company.com"],
   "types": {
     "feat": "Features",
     "fix": "Bug Fixes",
@@ -100,9 +115,9 @@ Edit `config.json`:
 
 **Fields**
 
-* `authors`: list of fragments used to match commit authors (login, name, or email)
-* `types`: mapping between commit types and changelog sections
-* `ignoreTypes`: commit types that will be excluded
+- `authors`: list of fragments used to match commit authors (login, name, or email)
+- `types`: mapping between commit types and changelog sections
+- `ignoreTypes`: commit types that will be excluded
 
 Author matching is **case-insensitive** and **partial**, making it compatible with squash merges, bots, and different email formats.
 
@@ -113,28 +128,48 @@ Author matching is **case-insensitive** and **partial**, making it compatible wi
 ### Generate changelog for a release (recommended)
 
 ```bash
-node changelog.js v1.3.0
+npm run changelog v1.3.0
 ```
 
 The script automatically determines the previous tag and generates the changelog for that release.
 
 ---
 
+### Generate changelog for multiple versions
+
+```bash
+npm run changelog 10
+```
+
+Generates changelog for the last 10 versions. The script will process each version sequentially and combine all changelogs into a single output.
+
+---
+
 ### Generate changelog for an explicit interval
 
 ```bash
-node changelog.js v1.2.0 v1.3.0
+npm run changelog v1.2.0 v1.3.0
+```
+
+---
+
+### Direct execution (without npm)
+
+```bash
+node index.js v1.3.0
+node index.js 10
+node index.js v1.2.0 v1.3.0
 ```
 
 ---
 
 ### Output
 
-* Local files:
+- Local files:
+  - `CHANGELOG.md`
+  - `CHANGELOG.html`
 
-  * `CHANGELOG.md`
-  * `CHANGELOG.html`
-* If Confluence is configured, the changelog is prepended to the specified page.
+- If Confluence is configured, the changelog is prepended to the specified page.
 
 ---
 
@@ -161,10 +196,10 @@ chore: bump multiplatform SDK version
 
 Notes:
 
-* Pull request numbers are optional
-* When present, PR numbers are converted into clickable links
-* Commits with ignored types are excluded
-* Commits that do not match the pattern are grouped under `Outros`
+- Pull request numbers are optional
+- When present, PR numbers are converted into clickable links
+- Commits with ignored types are excluded
+- Commits that do not match the pattern are grouped under `Outros`
 
 ---
 
@@ -172,10 +207,12 @@ Notes:
 
 ```md
 ## Features
+
 - Remove legacy onboarding selector kmp flow ([#21544](https://github.com/org/repo/pull/21544))
 - Improving analytics events
 
 ## Bug Fixes
+
 - Adjusts nullable responses LPPJ-675 ([#21540](https://github.com/org/repo/pull/21540))
 ```
 
@@ -183,10 +220,12 @@ Notes:
 
 ## Notes
 
-* Commits are retrieved using the GitHub `compareCommits` API.
-* The tool reflects the actual Git history; squash merges result in one entry per PR.
-* The changelog generation is tolerant to inconsistent commit formats.
-* Output format can be adapted to HTML, JSON, CSV, or messaging platforms.
+- Commits are retrieved using the GitHub `compareCommits` API.
+- The tool reflects the actual Git history; squash merges result in one entry per PR.
+- The changelog generation is tolerant to inconsistent commit formats.
+- Versions without valid commits or PRs will display "No changes" in the output.
+- When generating multiple versions, the script processes them sequentially from newest to oldest.
+- Output format can be adapted to HTML, JSON, CSV, or messaging platforms.
 
 ---
 
