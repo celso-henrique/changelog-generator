@@ -173,7 +173,7 @@ function generateChangelog(commits, version) {
   const body = Object.entries(sections)
     .map(
       ([title, items]) =>
-        `<h3>${title}</h3><ul>${items.join("")}</ul>`
+        `<table style="width: 100%; table-layout: fixed;"><colgroup><col style="width: 60%"><col style="width: 40%"></colgroup><tbody><tr><th>${title}</th><th>Descrição</th></tr><tr><td><ul>${items.join("")}</ul></td><td></td></tr></tbody></table>`
     )
     .join("");
 
